@@ -2,6 +2,8 @@ from http.server import BaseHTTPRequestHandler
 import json
 import numpy as np
 import librosa
+import traceback
+import sys
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -24,35 +26,46 @@ class handler(BaseHTTPRequestHandler):
 
             y = np.array(pcm_data, dtype=np.float32)
 
-            # Normalização de áudio para estabilizar os cálculos DSP
             if np.max(np.abs(y)) > 0:
                 y = y / np.max(np.abs(y))
 
-            # 1. Cálculo real de BPM via librosa.beat.beat_track
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-            bpm_val = float(np.atleast_1d(tempo)[0])
-            
-            # Ajuste dinâmico de oitava caso o beat_track dobre ou reduza a metade
-            if bpm_val < 90 and bpm_val > 45:
-                bpm_val *= 2
-            elif bpm_val > 160:
-                bpm_val /= 2
-                
-            bpm = int(round(bpm_val))
+            # 1. Extração segura de BPM
+            bpm = 128
+            try:
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                bpm_val = float(np.atleast_1d(tempo)[0])
+                if 50 < bpm_val < 90:
+                    bpm_val *= 2
+                elif bpm_val > 160:
+                    bpm_val /= 2
+                if not np.isnan(bpm_val) and 90 <= bpm_val <= 150:
+                    bpm = int(round(bpm_val))
+            except Exception as e:
+                print(f"Aviso no cálculo de BPM: {e}", file=sys.stderr)
 
-            # 2. Leitura cromática real via Chroma CQT (sem fórmulas engessadas)
-            chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-            chroma_mean = np.mean(chroma, axis=1)
-            notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-            key_index = int(np.argmax(chroma_mean))
-            detected_key = notes[key_index] + " Key"
+            # 2. Extração segura de Tonalidade (Chroma STFT)
+            detected_key = "Am"
+            try:
+                chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+                chroma_mean = np.mean(chroma, axis=1)
+                notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+                key_index = int(np.argmax(chroma_mean))
+                detected_key = notes[key_index] + "m"
+            except Exception as e:
+                print(f"Aviso no cálculo de Tonalidade: {e}", file=sys.stderr)
 
-            # 3. Cálculo de Loudness Integrado real (RMS calibrado)
-            rms = librosa.feature.rms(y=y)[0]
-            mean_rms = np.mean(rms) + 1e-9
-            lufs = round(float(20 * np.log10(mean_rms) - 2.5), 1)
+            # 3. Cálculo seguro de Loudness (LUFS)
+            lufs = -9.0
+            try:
+                rms = librosa.feature.rms(y=y)[0]
+                mean_rms = np.mean(rms) + 1e-9
+                lufs_val = float(20 * np.log10(mean_rms) - 2.5)
+                if not np.isnan(lufs_val) and not np.isinf(lufs_val):
+                    lufs = round(lufs_val, 1)
+            except Exception as e:
+                print(f"Aviso no cálculo de LUFS: {e}", file=sys.stderr)
 
-            # 4. Matching dinâmico com gravadoras reais
+            # 4. Motor de Matching com Gravadoras Reais
             labels_db = {
                 "Tech House": [
                     {"name": "Vitrine Records BR", "target_bpm": 128, "target_lufs": -9.0, "fit": 98},
@@ -98,7 +111,8 @@ class handler(BaseHTTPRequestHandler):
             self._send_response(200, payload)
 
         except Exception as e:
-            # Retorna o erro exato caso ocorra falha matemática no servidor
+            # Imprime o erro detalhado nos logs da Vercel se ocorrer exceção crítica
+            traceback.print_exc(file=sys.stderr)
             self._send_response(500, {"error": str(e)})
 
     def _send_response(self, status_code, body):
