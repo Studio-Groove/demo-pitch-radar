@@ -26,18 +26,13 @@ class handler(BaseHTTPRequestHandler):
 
             y = np.array(pcm_data, dtype=np.float32)
 
-            # Normalização de ganho de pico
             if np.max(np.abs(y)) > 0:
                 y = y / np.max(np.abs(y))
 
-            # SEPARAÇÃO DE FONTES (HPSS): Isola Harmônicos (Melodias/Acordes) de Percursão (Kick/Drums)
-            y_harmonic, y_percussive = librosa.effects.hpss(y)
-
-            # 1. Cálculo de BPM cirúrgico na pista percussiva
+            # 1. Cálculo real de BPM via librosa
             bpm = 128
             try:
-                onset_env = librosa.onset.onset_strength(y=y_percussive, sr=sr)
-                tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
                 bpm_val = float(np.atleast_1d(tempo)[0])
                 if 50 < bpm_val < 95:
                     bpm_val *= 2
@@ -48,14 +43,13 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"Erro BPM: {e}", file=sys.stderr)
 
-            # 2. Cálculo de Tonalidade EXCLUSIVO na pista harmônica (livre da poluição do kick/bass)
+            # 2. Cálculo real de Tonalidade via Chroma STFT (estável e sem falhas de pacotes)
             detected_key = "Am"
             try:
-                chroma = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr)
+                chroma = librosa.feature.chroma_stft(y=y, sr=sr)
                 chroma_mean = np.mean(chroma, axis=1)
-                
                 notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-                # Perfis modais para diferenciar Major vs Minor com precisão
+                
                 major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
                 minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
                 
@@ -74,7 +68,7 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"Erro Key: {e}", file=sys.stderr)
 
-            # 3. Cálculo de Loudness (LUFS Integrado real)
+            # 3. Cálculo de Loudness (LUFS Integrado)
             lufs = -9.0
             try:
                 rms = librosa.feature.rms(y=y)[0]
