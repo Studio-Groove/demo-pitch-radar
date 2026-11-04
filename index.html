@@ -24,7 +24,7 @@
         </div>
         <div class="flex items-center gap-6 text-xs text-slate-400">
             <div>DATABASE: <span class="text-cyan-300 font-semibold">BEATPORT TOP 100 REAL</span></div>
-            <div>ENGINE: <span class="text-emerald-400 font-semibold">DYNAMIC SPECTRAL + PYTHON</span></div>
+            <div>ENGINE: <span class="text-emerald-400 font-semibold">OPTIMIZED STREAM PIPELINE + PYTHON</span></div>
         </div>
     </header>
 
@@ -155,7 +155,7 @@
             const subgenreSelect = document.getElementById('subgenre').value;
 
             submitBtn.disabled = true;
-            submitBtn.textContent = 'A EXTRAIR ESPECTRO DINÂMICO...';
+            submitBtn.textContent = 'A EXTRAIR ESPECTRO COMPACTO...';
             statusBadge.className = 'text-xs px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 animate-pulse';
             statusBadge.textContent = 'A PROCESSAR STREAM...';
 
@@ -167,22 +167,23 @@
                 const duration = decodedBuffer.duration;
                 const originalRate = decodedBuffer.sampleRate;
                 
-                // Pega um trecho de 40 segundos a partir de 30% da música (garantindo que pega o miolo rico da faixa)
-                const sliceDuration = Math.min(40, duration);
-                const startOffsetTime = duration > 60 ? duration * 0.30 : 0;
+                // Pega exatamente 20 segundos focados no Drop (região de 35% da faixa)
+                const sliceDuration = Math.min(20, duration);
+                const startOffsetTime = duration > 45 ? duration * 0.35 : 0;
 
                 const sampleStart = Math.floor(startOffsetTime * originalRate);
                 const sampleLength = Math.floor(sliceDuration * originalRate);
                 const originalData = decodedBuffer.getChannelData(0);
 
-                const targetRate = 16000;
-                const newLength = Math.floor(sampleLength * (targetRate / originalRate));
+                // Sample rate compacto de 12kHz para payload ultraleve (~250KB)
+                const targetRate = 12000;
+                const step = originalRate / targetRate;
                 const downsampled = [];
 
-                for (let i = 0; i < newLength; i++) {
-                    const origIndex = sampleStart + Math.floor(i * (originalRate / targetRate));
-                    if (origIndex < originalData.length) {
-                        downsampled.push(Number(originalData[origIndex].toFixed(4)));
+                for (let i = 0; i < sampleLength; i += step) {
+                    const idx = Math.floor(sampleStart + i);
+                    if (idx < originalData.length) {
+                        downsampled.push(Number(originalData[idx].toFixed(3)));
                     }
                 }
 
