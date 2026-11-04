@@ -29,46 +29,55 @@ class handler(BaseHTTPRequestHandler):
             if np.max(np.abs(y)) > 0:
                 y = y / np.max(np.abs(y))
 
-            # 1. Cálculo real de BPM via librosa
+            # 1. Cálculo real de BPM via Librosa onset
             bpm = 128
             try:
-                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+                tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr, aggregate=np.median)
                 bpm_val = float(np.atleast_1d(tempo)[0])
-                if 50 < bpm_val < 95:
+                if 50 < bpm_val < 90:
                     bpm_val *= 2
                 elif bpm_val > 160:
                     bpm_val /= 2
                 if not np.isnan(bpm_val):
                     bpm = int(round(bpm_val))
             except Exception as e:
-                print(f"Erro BPM: {e}", file=sys.stderr)
+                print(f"Erro no BPM: {e}", file=sys.stderr)
 
-            # 2. Cálculo real de Tonalidade via Chroma STFT (estável e sem falhas de pacotes)
+            # 2. Extração Real de Tonalidade Dinâmica (Chroma CQT + Filtro Harmónico)
             detected_key = "Am"
             try:
-                chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+                # Aplica um filtro passa-alto suave para remover a energia do sub-bass/kick que suja a nota
+                y_high = librosa.effects.preemphasis(y)
+                chroma = librosa.feature.chroma_cqt(y=y_high, sr=sr, fmin=librosa.note_to_hz('C2'))
                 chroma_mean = np.mean(chroma, axis=1)
+                
                 notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
                 
+                # Perfis harmónicos Krumhansl-Schmuckler
                 major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
                 minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
                 
                 best_score = -999.0
+                best_key = "Am"
+                
                 for i in range(12):
                     maj_corr = np.corrcoef(chroma_mean, np.roll(major_profile, i))[0, 1]
                     min_corr = np.corrcoef(chroma_mean, np.roll(minor_profile, i))[0, 1]
                     
                     if not np.isnan(maj_corr) and maj_corr > best_score:
                         best_score = maj_corr
-                        detected_key = notes[i] + " Major"
+                        best_key = notes[i] + " Major"
                         
                     if not np.isnan(min_corr) and min_corr > best_score:
                         best_score = min_corr
-                        detected_key = notes[i] + " Minor"
+                        best_key = notes[i] + " Minor"
+                        
+                detected_key = best_key
             except Exception as e:
-                print(f"Erro Key: {e}", file=sys.stderr)
+                print(f"Erro na Key: {e}", file=sys.stderr)
 
-            # 3. Cálculo de Loudness (LUFS Integrado)
+            # 3. Cálculo de Loudness (LUFS)
             lufs = -9.0
             try:
                 rms = librosa.feature.rms(y=y)[0]
@@ -77,9 +86,9 @@ class handler(BaseHTTPRequestHandler):
                 if not np.isnan(lufs_val) and not np.isinf(lufs_val):
                     lufs = round(lufs_val, 1)
             except Exception as e:
-                print(f"Erro LUFS: {e}", file=sys.stderr)
+                print(f"Erro no LUFS: {e}", file=sys.stderr)
 
-            # 4. Motor de Matching com Gravadoras Reais
+            # 4. Matching dinâmico com gravadoras reais
             labels_db = {
                 "Tech House": [
                     {"name": "Vitrine Records BR", "target_bpm": 128, "target_lufs": -9.0, "fit": 98},
