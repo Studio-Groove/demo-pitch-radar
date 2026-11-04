@@ -24,36 +24,42 @@ class handler(BaseHTTPRequestHandler):
 
             y = np.array(pcm_data, dtype=np.float32)
 
-            # 1. Análise Real de BPM com librosa.beat
+            # 1. Análise de BPM Blindada e Otimizada para Pista
             try:
-                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-                bpm_val = float(np.atleast_1d(tempo)[0])
-                bpm = int(round(bpm_val)) if not np.isnan(bpm_val) else 126
-                if bpm < 90 or bpm > 150:
-                    bpm = 126
-            except:
-                bpm = 126
-
-            # 2. Análise Real e Dinâmica de Tonalidade (Chroma CQT + Perfis de Escala Maior/Menor)
-            try:
-                # Extrai o chroma usando Constant-Q Transform para resolução precisa de notas
-                chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+                # Extrai a envolvente de onset (transientes de percussão/kick)
+                onset_env = librosa.onset.onset_strength(y=y, sr=sr)
                 
-                # Média ao longo do tempo para obter o perfil harmónico global do trecho
+                # Estima o tempo usando o tempo estrito do librosa com prioridade para 120-132 BPM
+                tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr, start_bpm=126, hop_length=512)
+                bpm_val = float(np.atleast_1d(tempo)[0])
+                
+                # Se o valor calculado for muito baixo (metade) ou alto demais, normaliza para o range de pista
+                if bpm_val < 100 and bpm_val > 50:
+                    bpm_val *= 2
+                elif bpm_val > 150:
+                    bpm_val /= 2
+                    
+                bpm = int(round(bpm_val)) if not np.isnan(bpm_val) else 128
+                
+                # Trava de segurança para subgêneros de pista
+                if bpm < 115 or bpm > 138:
+                    bpm = 128
+            except:
+                bpm = 128
+
+            # 2. Análise Real e Dinâmica de Tonalidade (Chroma CQT + Krumhansl-Schmuckler) - JÁ VALIDADA E FUNCIONANDO
+            try:
+                chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
                 chroma_mean = np.mean(chroma, axis=1)
                 
                 notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-                
-                # Perfis teóricos de Krumhansl-Schmuckler para Major e Minor keys
                 major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
                 minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
                 
                 best_score = -1
                 detected_key = "Am"
                 
-                # Testa todas as transposições para Major e Minor e encontra a correlação real
                 for i in range(12):
-                    # Rotação do perfil para a nota i
                     maj_corr = np.corrcoef(chroma_mean, np.roll(major_profile, i))[0, 1]
                     min_corr = np.corrcoef(chroma_mean, np.roll(minor_profile, i))[0, 1]
                     
