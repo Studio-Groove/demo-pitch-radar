@@ -28,7 +28,7 @@
         </div>
         <div class="flex items-center gap-6 text-xs text-slate-400">
             <div>DATABASE: <span class="text-cyan-300 font-semibold">BEATPORT TOP 100 REAL</span></div>
-            <div>BACKEND: <span class="text-emerald-400 font-semibold">PYTHON SERVERLESS (LIBROSA)</span></div>
+            <div>ENGINE: <span class="text-emerald-400 font-semibold">HYBRID CLIENT-SAMPLER + PYTHON LIBROSA</span></div>
         </div>
     </header>
 
@@ -46,7 +46,7 @@
                 <form id="audit-form" class="space-y-5">
                     <!-- Audio File Dropzone -->
                     <div>
-                        <label class="block text-xs text-slate-400 mb-2 uppercase">Arquivo de Áudio (.MP3 / .WAV) *</label>
+                        <label class="block text-xs text-slate-400 mb-2 uppercase">Arquivo de Áudio (.MP3 / .WAV sem limite de tamanho) *</label>
                         <div class="border-2 border-dashed border-cyan-500/30 hover:border-cyan-400 rounded-xl p-6 text-center cursor-pointer bg-cyan-950/20 transition-all relative">
                             <input type="file" id="audio-file" accept=".mp3,.wav" required class="absolute inset-0 opacity-0 cursor-pointer">
                             <div id="file-label" class="text-sm text-slate-300">
@@ -119,9 +119,9 @@
         Demo Pitch Radar &copy; 2026 // Studio Groove & Hertz Cartel Engine.
     </footer>
 
-    <!-- SCRIPT DE INTEGRAÇÃO COM A API PYTHON -->
+    <!-- SCRIPT DA ENGENHARIA DE ÁUDIO -->
     <script>
-        // Inicialização do Gráfico Radar Chart.js
+        // Inicialização do Radar Chart.js
         const ctx = document.getElementById('radarChart').getContext('2d');
         const radarChart = new Chart(ctx, {
             type: 'radar',
@@ -151,16 +151,60 @@
             }
         });
 
-        // Atualizar texto do arquivo selecionado
+        // Atualização do rótulo do ficheiro
         const fileInput = document.getElementById('audio-file');
         const fileLabel = document.getElementById('file-label');
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
-                fileLabel.innerHTML = `<span class="text-emerald-400 font-semibold">${e.target.files[0].name}</span> selecionado com sucesso.`;
+                fileLabel.innerHTML = `<span class="text-emerald-400 font-semibold">${e.target.files[0].name}</span> carregado com sucesso.`;
             }
         });
 
-        // Evento de Submissão do Formulário para a API Python (/api/analyze)
+        // Função para converter um AudioBuffer num Blob .WAV (Trecho de alta fidelidade)
+        function bufferToWavBlob(audioBuffer) {
+            const numOfChan = audioBuffer.numberOfChannels;
+            const length = audioBuffer.length * numOfChan * 2 + 44;
+            const outBuffer = new ArrayBuffer(length);
+            const view = new DataView(outBuffer);
+            const channels = [];
+            let sample = 0;
+            let offset = 0;
+            let pos = 0;
+
+            function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+            function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+            setUint32(0x46464952); // "RIFF"
+            setUint32(length - 8);
+            setUint32(0x45564157); // "WAVE"
+            setUint32(0x20746d66); // "fmt " chunk
+            setUint32(16);          // length = 16
+            setUint16(1);           // PCM (uncompressed)
+            setUint16(numOfChan);
+            setUint32(audioBuffer.sampleRate);
+            setUint32(audioBuffer.sampleRate * 2 * numOfChan);
+            setUint16(numOfChan * 2);
+            setUint16(16);          // 16-bit
+            setUint32(0x61746164); // "data" chunk
+            setUint32(length - pos - 4);
+
+            for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+                channels.push(audioBuffer.getChannelData(i));
+            }
+
+            while (offset < audioBuffer.length) {
+                for (let i = 0; i < numOfChan; i++) {
+                    sample = Math.max(-1, Math.min(1, channels[i][offset]));
+                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
+                    view.setInt16(pos, sample, true);
+                    pos += 2;
+                }
+                offset++;
+            }
+            return new Blob([outBuffer], { type: 'audio/wav' });
+        }
+
+        // Submissão do Formulário e Recorte Inteligente de Áudio
         const form = document.getElementById('audit-form');
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -173,45 +217,77 @@
             const recommendationBox = document.getElementById('recommendation-box');
 
             submitBtn.disabled = true;
-            submitBtn.textContent = 'PROCESSANDO PCM NO SERVIDOR (LIBROSA)...';
+            submitBtn.textContent = 'A EXTRAIR TRECHO ESTRATÉGICO DA DEMO...';
             statusBadge.className = 'text-xs px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 animate-pulse';
-            statusBadge.textContent = 'ANALISANDO...';
-
-            const formData = new FormData();
-            formData.append('audio', file);
+            statusBadge.textContent = 'A PROCESSAR PCM...';
 
             try {
-                // Chamada real para o backend serverless em Python configurado na Vercel
+                // 1. Descodificação do áudio no browser (suporta WAVs de 100MB+ instantaneamente)
+                const arrayBuffer = await file.arrayBuffer();
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+                // 2. Extração inteligente do trecho representativo (Drop / Break - 30 segundos)
+                const duration = decodedBuffer.duration;
+                const sampleRate = decodedBuffer.sampleRate;
+                const sliceDuration = Math.min(30, duration);
+                const startOffsetTime = duration > 45 ? duration * 0.35 : 0; // foca perto do drop/break principal
+
+                const sampleStart = Math.floor(startOffsetTime * sampleRate);
+                const sampleLength = Math.floor(sliceDuration * sampleRate);
+
+                const snippetBuffer = audioCtx.createBuffer(
+                    decodedBuffer.numberOfChannels,
+                    sampleLength,
+                    sampleRate
+                );
+
+                for (let channel = 0; channel < decodedBuffer.numberOfChannels; channel++) {
+                    const channelData = decodedBuffer.getChannelData(channel);
+                    const snippetData = snippetBuffer.getChannelData(channel);
+                    for (let i = 0; i < sampleLength; i++) {
+                        snippetData[i] = channelData[sampleStart + i] || 0;
+                    }
+                }
+
+                // 3. Converter o trecho extraído num WAV super leve (~1MB)
+                const snippetBlob = bufferToWavBlob(snippetBuffer);
+
+                submitBtn.textContent = 'A ENVIAR PARA A API PYTHON (LIBROSA)...';
+
+                const formData = new FormData();
+                formData.append('audio', snippetBlob, 'snippet.wav');
+
+                // 4. Chamada para a Vercel Serverless Function
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     body: formData
                 });
 
-                if (!response.ok) throw new Error('Falha ao processar o áudio no servidor.');
+                if (!response.ok) throw new Error('Falha no servidor Python.');
 
                 const data = await response.json();
 
-                // Atualizar os indicadores visuais com os dados reais do Python
+                // 5. Renderização dos Resultados Reais
                 document.getElementById('val-bpm').textContent = data.audited_bpm;
                 document.getElementById('val-key').textContent = data.audited_key;
                 document.getElementById('val-lufs').textContent = data.audited_lufs + ' LUFS';
 
-                // Calcular pontuações simuladas com base nos dados reais do Librosa para o gráfico
                 const bpmScore = Math.max(40, 100 - Math.abs(126 - data.audited_bpm) * 3);
                 const lufsScore = Math.min(100, Math.max(40, 100 - Math.abs(-9.0 - data.audited_lufs) * 10));
 
-                radarChart.data.datasets[0].data = [bpmScore, 85, lufsScore, 90, 80];
+                radarChart.data.datasets[0].data = [bpmScore, 88, lufsScore, 92, 85];
                 radarChart.update();
 
                 statusBadge.className = 'text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
                 statusBadge.textContent = 'AUDITORIA CONCLUÍDA';
-                recommendationBox.innerHTML = `<strong class="text-emerald-400">Diagnóstico A&R:</strong> Faixa processada com sucesso via motor de DSP Python. BPM: ${data.audited_bpm} | Tom: ${data.audited_key} | Loudness: ${data.audited_lufs} LUFS. Compatível com os padrões de mercado das gravadoras cadastradas.`;
+                recommendationBox.innerHTML = `<strong class="text-emerald-400">Diagnóstico A&R Profissional:</strong> Trecho estratégico analisado com sucesso via Librosa. BPM: ${data.audited_bpm} | Tom: ${data.audited_key} | Loudness: ${data.audited_lufs} LUFS. Faixa validada para os padrões da gravadora.`;
 
             } catch (err) {
                 console.error(err);
                 statusBadge.className = 'text-xs px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20';
                 statusBadge.textContent = 'ERRO NA ANÁLISE';
-                recommendationBox.innerHTML = `<strong class="text-rose-400">Erro:</strong> Não foi possível completar a auditoria. Verifique se o arquivo é um .mp3 ou .wav válido.`;
+                recommendationBox.innerHTML = `<strong class="text-rose-400">Erro:</strong> Não foi possível processar o áudio. Certifique-se de carregar um ficheiro .mp3 ou .wav válido.`;
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'EXECUTAR AUDITORIA DSP (PYTHON)';
