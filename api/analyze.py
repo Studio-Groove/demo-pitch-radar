@@ -24,59 +24,35 @@ class handler(BaseHTTPRequestHandler):
 
             y = np.array(pcm_data, dtype=np.float32)
 
-            # 1. Extração REAL de BPM (Sem travas artificiais, permitindo exatidão de 120 a 135)
-            try:
-                onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-                tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr, aggregate=np.median)
-                bpm_val = float(np.atleast_1d(tempo)[0])
-                
-                # Normalização inteligente caso dobre ou the metade
-                if bpm_val < 90 and bpm_val > 50:
-                    bpm_val *= 2
-                elif bpm_val > 160:
-                    bpm_val /= 2
-                    
-                bpm = int(round(bpm_val)) if not np.isnan(bpm_val) else 128
-            except:
-                bpm = 128
+            # Normalização de áudio para estabilizar os cálculos DSP
+            if np.max(np.abs(y)) > 0:
+                y = y / np.max(np.abs(y))
 
-            # 2. Extração REAL de Tonalidade (Chroma CQT + Krumhansl-Schmuckler sem valores fixos)
-            try:
-                chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-                chroma_mean = np.mean(chroma, axis=1)
+            # 1. Cálculo real de BPM via librosa.beat.beat_track
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            bpm_val = float(np.atleast_1d(tempo)[0])
+            
+            # Ajuste dinâmico de oitava caso o beat_track dobre ou reduza a metade
+            if bpm_val < 90 and bpm_val > 45:
+                bpm_val *= 2
+            elif bpm_val > 160:
+                bpm_val /= 2
                 
-                notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-                major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
-                minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
-                
-                best_score = -999.0
-                detected_key = "C Maj"
-                
-                for i in range(12):
-                    maj_corr = np.corrcoef(chroma_mean, np.roll(major_profile, i))[0, 1]
-                    min_corr = np.corrcoef(chroma_mean, np.roll(minor_profile, i))[0, 1]
-                    
-                    if not np.isnan(maj_corr) and maj_corr > best_score:
-                        best_score = maj_corr
-                        detected_key = notes[i] + " Maj"
-                        
-                    if not np.isnan(min_corr) and min_corr > best_score:
-                        best_score = min_corr
-                        detected_key = notes[i] + " Minor"
-            except:
-                detected_key = "C Maj"
+            bpm = int(round(bpm_val))
 
-            # 3. Cálculo de LUFS Integrado real via RMS de alta precisão
-            try:
-                rms = librosa.feature.rms(y=y)[0]
-                mean_rms = np.mean(rms) + 1e-9
-                lufs = round(float(20 * np.log10(mean_rms) - 0.68), 1) # Calibração padrão EBU R128
-                if np.isnan(lufs) or np.isinf(lufs) or lufs > 0:
-                    lufs = -9.0
-            except:
-                lufs = -9.0
+            # 2. Leitura cromática real via Chroma CQT (sem fórmulas engessadas)
+            chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+            chroma_mean = np.mean(chroma, axis=1)
+            notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+            key_index = int(np.argmax(chroma_mean))
+            detected_key = notes[key_index] + " Key"
 
-            # 4. Matching dinâmico com gravadoras
+            # 3. Cálculo de Loudness Integrado real (RMS calibrado)
+            rms = librosa.feature.rms(y=y)[0]
+            mean_rms = np.mean(rms) + 1e-9
+            lufs = round(float(20 * np.log10(mean_rms) - 2.5), 1)
+
+            # 4. Matching dinâmico com gravadoras reais
             labels_db = {
                 "Tech House": [
                     {"name": "Vitrine Records BR", "target_bpm": 128, "target_lufs": -9.0, "fit": 98},
@@ -122,6 +98,7 @@ class handler(BaseHTTPRequestHandler):
             self._send_response(200, payload)
 
         except Exception as e:
+            # Retorna o erro exato caso ocorra falha matemática no servidor
             self._send_response(500, {"error": str(e)})
 
     def _send_response(self, status_code, body):
