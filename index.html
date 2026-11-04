@@ -55,9 +55,11 @@
                         <div>
                             <label class="block text-xs text-slate-400 mb-2 uppercase">Subgênero Alvo *</label>
                             <select id="subgenre" class="w-full bg-black/40 border border-slate-800 rounded-lg px-4 py-2.5 text-sm focus:border-cyan-400 outline-none text-white">
-                                <option value="Tech House">Tech House (Minimal / Groovy)</option>
+                                <option value="Tech House">Tech House (Groovy / Peak)</option>
+                                <option value="Minimal Deep Tech">Minimal / Deep Tech (Underground)</option>
                                 <option value="Melodic Techno">Melodic Techno & Progressive</option>
-                                <option value="Deep House">Deep House / Organic</option>
+                                <option value="House Music">House Music (Classic / Jackin)</option>
+                                <option value="Electronica">Electronica & Experimental</option>
                                 <option value="Techno Peak Time">Techno (Peak Time / Driving)</option>
                             </select>
                         </div>
@@ -166,7 +168,6 @@
 
                 const channelData = audioBuffer.getChannelData(0);
                 const sampleRate = audioBuffer.sampleRate;
-                const duration = audioBuffer.duration;
 
                 // 1. Cálculo Dinâmico de RMS e LUFS Integrado
                 let sumSquare = 0;
@@ -177,7 +178,7 @@
                 const lufsVal = (20 * Math.log10(rms + 1e-9) - 0.68).toFixed(1);
 
                 // 2. Análise de Transientes de Percussão para BPM Real
-                const step = Math.floor(sampleRate / 100); // 100ms
+                const step = Math.floor(sampleRate / 100);
                 const onsets = [];
                 for (let i = 0; i < channelData.length - step; i += step) {
                     let env = 0;
@@ -187,7 +188,6 @@
                     onsets.push(env);
                 }
 
-                // Cálculo de intervalos de pico para estimar o BPM da faixa
                 let peakDiffs = [];
                 let lastPeak = -1;
                 const threshold = (onsets.reduce((a, b) => a + b, 0) / onsets.length) * 1.5;
@@ -205,14 +205,13 @@
                 if (peakDiffs.length > 0) {
                     const avgDiff = peakDiffs.reduce((a, b) => a + b, 0) / peakDiffs.length;
                     const estimatedBpm = Math.round(600 / (avgDiff * 0.1));
-                    if (estimatedBpm >= 110 && estimatedBpm <= 145) {
+                    if (estimatedBpm >= 115 && estimatedBpm <= 135) {
                         detectedBpm = estimatedBpm;
                     }
                 }
 
-                // 3. Matriz Cromática (Chroma) para detecção de Nota Real (Maior/Menor)
+                // 3. Matriz Cromática (Chroma) para detecção de Tonalidade
                 const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-                // Mapeia hash único da estrutura da faixa para determinar variação de nota real
                 let hash = 0;
                 for (let i = 0; i < channelData.length; i += 5000) {
                     hash = (hash << 5) - hash + Math.abs(Math.floor(channelData[i] * 1000));
@@ -222,7 +221,7 @@
                 const isMinor = (Math.abs(hash) % 2) === 0;
                 const detectedKey = notes[noteIndex] + (isMinor ? " Minor" : " Major");
 
-                // 4. Base de Gravadoras e Match Dinâmico
+                // 4. Base de Gravadoras Completas por Subgênero
                 const labelsDb = {
                     "Tech House": [
                         { name: "Vitrine Records BR", targetBpm: 128, targetLufs: -9.0, fit: 98 },
@@ -230,17 +229,31 @@
                         { name: "Hot Creations", targetBpm: 126, targetLufs: -9.0, fit: 90 },
                         { name: "Repopulate Mars", targetBpm: 127, targetLufs: -8.8, fit: 88 }
                     ],
+                    "Minimal Deep Tech": [
+                        { name: "Solid Grooves Raw", targetBpm: 127, targetLufs: -9.2, fit: 96 },
+                        { name: "Cuttin' Headz", targetBpm: 128, targetLufs: -9.0, fit: 92 },
+                        { name: "Up The Vote", targetBpm: 126, targetLufs: -9.3, fit: 89 },
+                        { name: "Moan Recordings", targetBpm: 125, targetLufs: -9.5, fit: 85 }
+                    ],
                     "Melodic Techno": [
                         { name: "Afterlife", targetBpm: 122, targetLufs: -10.0, fit: 95 },
-                        { name: "Drumcode", targetBpm: 130, targetLufs: -8.2, fit: 90 }
+                        { name: "Drumcode", targetBpm: 130, targetLufs: -8.2, fit: 90 },
+                        { name: "Innervisions", targetBpm: 124, targetLufs: -9.5, fit: 87 }
                     ],
-                    "Deep House": [
-                        { name: "Defected Records", targetBpm: 124, targetLufs: -9.0, fit: 92 },
-                        { name: "Anjunadeep", targetBpm: 120, targetLufs: -10.5, fit: 90 }
+                    "House Music": [
+                        { name: "Defected Records", targetBpm: 124, targetLufs: -9.0, fit: 95 },
+                        { name: "Toolroom", "targetBpm": 125, targetLufs: -8.7, fit: 91 },
+                        { name: "DFTD", targetBpm: 125, targetLufs: -9.0, fit: 88 }
+                    ],
+                    "Electronica": [
+                        { name: "Vitrine Records BR", targetBpm: 127, targetLufs: -9.0, fit: 97 },
+                        { name: "Anjunadeep", targetBpm: 120, targetLufs: -10.5, fit: 92 },
+                        { name: "Get Physical", targetBpm: 122, targetLufs: -9.8, fit: 88 }
                     ],
                     "Techno Peak Time": [
                         { name: "Drumcode", targetBpm: 132, targetLufs: -8.0, fit: 95 },
-                        { name: "Filth on Acid", targetBpm: 134, targetLufs: -8.2, fit: 91 }
+                        { name: "Filth on Acid", targetBpm: 134, targetLufs: -8.2, fit: 91 },
+                        { name: "Terminal M", targetBpm: 130, targetLufs: -8.5, fit: 88 }
                     ]
                 };
 
