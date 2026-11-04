@@ -1,35 +1,27 @@
 from http.server import BaseHTTPRequestHandler
 import json
-import cgi
-import io
 import numpy as np
 import librosa
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
-            content_type = self.headers.get('content-type')
-            if not content_type:
-                self._send_response(400, {"error": "Sem cabeçalho Content-Type"})
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self._send_response(400, {"error": "Corpo da requisição vazio"})
                 return
 
-            # Parsing do formulário Multipart contendo o áudio
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': content_type}
-            )
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode('utf-8'))
+            
+            pcm_data = data.get('audio_data')
+            sr = data.get('sample_rate', 16000)
 
-            if 'audio' not in form:
-                self._send_response(400, {"error": "Ficheiro de áudio não fornecido"})
+            if not pcm_data:
+                self._send_response(400, {"error": "Dados de áudio não fornecidos"})
                 return
 
-            file_item = form['audio']
-            file_bytes = file_item.file.read()
-
-            # Leitura do buffer de áudio com o Librosa
-            audio_buffer = io.BytesIO(file_bytes)
-            y, sr = librosa.load(audio_buffer, sr=22050, mono=True)
+            y = np.array(pcm_data, dtype=np.float32)
 
             if len(y) == 0:
                 self._send_response(400, {"error": "Buffer de áudio vazio"})
@@ -51,7 +43,6 @@ class handler(BaseHTTPRequestHandler):
             mean_rms = np.mean(rms) + 1e-9
             lufs = round(float(20 * np.log10(mean_rms) - 3.0), 1)
 
-            # Resposta JSON estruturada para o A&R Radar
             payload = {
                 "status": "success",
                 "audited_bpm": bpm,
